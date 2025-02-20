@@ -129,16 +129,6 @@ Contributions are welcome! Please feel free to submit a Pull Request.
    ```
 5. Open a Pull Request
 
-## 📜 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-* Inspired by the LAMP stack community
-* Built for developers, by developers
-* Special thanks to all contributors
-
 ## ⚠️ Disclaimer
 
 This script is provided as-is, without warranties. Always review scripts before running them with root privileges and ensure you have proper backups.
