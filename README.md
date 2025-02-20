@@ -33,7 +33,7 @@ LAMPfire is a powerful bash script that automates the installation and configura
 1. Clone the repository:
    ```bash
    git clone https://github.com/agarhouse/lampfire.git
-   cd lampfire
+   cd LampFire
    ```
 
 2. Make the script executable:
