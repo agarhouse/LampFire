@@ -114,9 +114,17 @@ systemctl start mysql
 check_status "MySQL started" "MySQL failed to start"
 
 print_status "Setting temporary MySQL root password..."
-mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'temppass123';"
-mysql -e "FLUSH PRIVILEGES;"
-check_status "Temp password set" "Failed to set root password"
+
+# Try passwordless sudo-based access (works with auth_socket)
+if sudo mysql -e "SELECT 1;" &> /dev/null; then
+    sudo mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'temppass123';"
+    sudo mysql -e "FLUSH PRIVILEGES;"
+    check_status "Temp password set" "Failed to set root password"
+else
+    print_error "Unable to access MySQL with sudo. Manual intervention may be required."
+    exit 1
+fi
+
 
 # PHP Install
 print_status "Installing PHP + modules..."
