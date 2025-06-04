@@ -96,18 +96,25 @@ check_status "Firewall configured" "Firewall rule setup failed"
 print_status "Generating optimized MySQL config..."
 create_mysql_config
 
-# Install MySQL
+# Install MySQL with improved error handling
 print_status "Installing MySQL..."
 DEBIAN_FRONTEND=noninteractive apt install -y mysql-server
 if [ $? -ne 0 ]; then
-    print_error "Initial MySQL install failed. Retrying clean install..."
-    apt remove --purge -y mysql-server mysql-server-8.0 mysql-common
+    print_error "MySQL installation failed. Cleaning up and retrying..."
+    apt remove --purge -y mysql-server* mysql-common mysql-client*
     apt autoremove -y
     apt autoclean
-    rm -rf /etc/mysql /var/lib/mysql /var/log/mysql
+    rm -rf /etc/mysql /var/lib/mysql* /var/log/mysql
+    apt update
     DEBIAN_FRONTEND=noninteractive apt install -y mysql-server
 fi
-check_status "MySQL installed" "MySQL installation failed"
+check_status "MySQL installed" "MySQL installation failed after retry"
+
+print_status "Configuring MySQL service..."
+systemctl enable mysql
+systemctl restart mysql
+sleep 3  # Give MySQL time to fully start
+check_status "MySQL service configured" "MySQL service configuration failed"
 
 print_status "Starting MySQL..."
 systemctl start mysql
@@ -115,16 +122,40 @@ check_status "MySQL started" "MySQL failed to start"
 
 print_status "Setting temporary MySQL root password..."
 
-# Try passwordless sudo-based access (works with auth_socket)
-if sudo mysql -e "SELECT 1;" &> /dev/null; then
-    sudo mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'temppass123';"
-    sudo mysql -e "FLUSH PRIVILEGES;"
-    check_status "Temp password set" "Failed to set root password"
-else
-    print_error "Unable to access MySQL with sudo. Manual intervention may be required."
-    exit 1
-fi
+# MySQL 8.0+ fix: Run mysql_secure_installation equivalent manually
+# First, we need to handle the initial root setup properly
 
+# Check if we can connect without password (new installations sometimes allow this)
+if mysql -u root -e "SELECT 1;" &> /dev/null 2>&1; then
+    print_status "Root access available without password, setting temp password..."
+    mysql -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'temppass123';"
+    mysql -u root -e "FLUSH PRIVILEGES;"
+    check_status "Temp password set via direct access" "Failed to set temp password"
+elif sudo mysql -u root -e "SELECT 1;" &> /dev/null 2>&1; then
+    print_status "Root access available with sudo, setting temp password..."
+    sudo mysql -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'temppass123';"
+    sudo mysql -u root -e "FLUSH PRIVILEGES;"
+    check_status "Temp password set via sudo" "Failed to set temp password"
+else
+    print_status "Using mysqladmin to set initial password..."
+    # Alternative method using mysqladmin
+    mysqladmin -u root password 'temppass123' &> /dev/null
+    if [ $? -eq 0 ]; then
+        print_success "Temp password set via mysqladmin"
+    else
+        print_error "All methods failed. Trying mysql_secure_installation approach..."
+        # Last resort: simulate mysql_secure_installation
+        mysql --user=root <<EOF
+ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'temppass123';
+DELETE FROM mysql.user WHERE User='';
+DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
+DROP DATABASE IF EXISTS test;
+DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
+FLUSH PRIVILEGES;
+EOF
+        check_status "Password set via direct SQL" "All password setting methods failed"
+    fi
+fi
 
 # PHP Install
 print_status "Installing PHP + modules..."
