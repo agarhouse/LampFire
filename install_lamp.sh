@@ -122,39 +122,67 @@ check_status "MySQL started" "MySQL failed to start"
 
 print_status "Setting temporary MySQL root password..."
 
-# MySQL 8.0+ fix: Run mysql_secure_installation equivalent manually
-# First, we need to handle the initial root setup properly
+# Debug: Show MySQL status first  
+print_status "Checking MySQL status..."
+systemctl status mysql --no-pager -l || true
+sleep 2
 
-# Check if we can connect without password (new installations sometimes allow this)
-if mysql -u root -e "SELECT 1;" &> /dev/null 2>&1; then
-    print_status "Root access available without password, setting temp password..."
-    mysql -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'temppass123';"
-    mysql -u root -e "FLUSH PRIVILEGES;"
-    check_status "Temp password set via direct access" "Failed to set temp password"
-elif sudo mysql -u root -e "SELECT 1;" &> /dev/null 2>&1; then
-    print_status "Root access available with sudo, setting temp password..."
-    sudo mysql -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'temppass123';"
-    sudo mysql -u root -e "FLUSH PRIVILEGES;"
-    check_status "Temp password set via sudo" "Failed to set temp password"
+TEMP_PASS="temppass123"
+
+# Method 1: Try direct connection (most common for fresh installs)
+print_status "Method 1: Testing direct MySQL access..."
+if mysql -u root -e "SELECT 1;" 2>/dev/null; then
+    print_success "Direct MySQL access works!"
+    mysql -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$TEMP_PASS'; FLUSH PRIVILEGES;"
+    print_success "Password set via direct method"
 else
-    print_status "Using mysqladmin to set initial password..."
-    # Alternative method using mysqladmin
-    mysqladmin -u root password 'temppass123' &> /dev/null
-    if [ $? -eq 0 ]; then
-        print_success "Temp password set via mysqladmin"
+    print_status "Direct access failed, trying sudo method..."
+    
+    # Method 2: Try sudo (Ubuntu/Debian default)
+    if sudo mysql -u root -e "SELECT 1;" 2>/dev/null; then
+        print_success "Sudo MySQL access works!"
+        sudo mysql -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$TEMP_PASS'; FLUSH PRIVILEGES;"
+        print_success "Password set via sudo method"
     else
-        print_error "All methods failed. Trying mysql_secure_installation approach..."
-        # Last resort: simulate mysql_secure_installation
-        mysql --user=root <<EOF
+        print_status "Sudo method failed, using safe mode..."
+        
+        # Method 3: Safe mode (last resort)
+        print_status "Stopping MySQL for safe mode setup..."
+        systemctl stop mysql
+        
+        print_status "Starting MySQL in safe mode..."
+        mysqld_safe --skip-grant-tables --skip-networking &
+        SAFE_PID=$!
+        sleep 5
+        
+        print_status "Setting password in safe mode..."
+        mysql -u root << 'EOF'
+USE mysql;
 ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'temppass123';
-DELETE FROM mysql.user WHERE User='';
-DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
-DROP DATABASE IF EXISTS test;
-DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
 FLUSH PRIVILEGES;
 EOF
-        check_status "Password set via direct SQL" "All password setting methods failed"
+        
+        print_status "Stopping safe mode and restarting MySQL normally..."
+        kill $SAFE_PID 2>/dev/null || true
+        sleep 3
+        systemctl start mysql
+        sleep 3
+        print_success "Password set via safe mode"
     fi
+fi
+
+# Verify the password works
+print_status "Verifying password setup..."
+if mysql -u root -p"$TEMP_PASS" -e "SELECT 'Password verification successful' as Status;" 2>/dev/null; then
+    print_success "MySQL root password is working correctly"
+else
+    print_error "Password verification failed!"
+    print_status "Attempting manual mysql_secure_installation..."
+    mysql_secure_installation
+    # Set our temp password after secure installation
+    read -s -p "Enter the root password you just set: " USER_ROOT_PASS
+    mysql -u root -p"$USER_ROOT_PASS" -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$TEMP_PASS'; FLUSH PRIVILEGES;"
+    print_success "Using user-provided password"
 fi
 
 # PHP Install
